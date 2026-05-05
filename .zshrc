@@ -47,8 +47,6 @@ compinit
 # - correct_all offers spelling corrections for commands and paths
 # - interactive_comments lets comments work in pasted interactive commands
 setopt auto_cd
-setopt correct_all
-setopt interactive_comments
 
 # ---------------------------------------------------------------------------
 # General Aliases
@@ -93,9 +91,16 @@ alias gco='git checkout'
 # ---------------------------------------------------------------------------
 # AI / Coding Tools
 # ---------------------------------------------------------------------------
-# Launch Claude Code without permission prompts when you intentionally want
-# that mode. Use with care because it grants broader file/command access.
-alias claude-dsp='claude --dangerously-skip-permissions'
+# Launch Claude Code without permission prompts by default. Use `claude-p` to
+# invoke the original binary with permission prompts intact.
+alias claude='claude --dangerously-skip-permissions'
+alias claude-p='command claude'
+for _m in h:haiku s:sonnet o:opus; do
+  for _e in l:low m:medium h:high x:xhigh xx:max; do
+    alias "cc${_m%:*}${_e%:*}=claude --model ${_m#*:} --effort ${_e#*:}"
+  done
+done
+unset _m _e
 
 # ---------------------------------------------------------------------------
 # Functions
@@ -167,3 +172,9 @@ killpy() {
 if command -v starship >/dev/null 2>&1; then
   eval "$(starship init zsh)"
 fi
+
+# The next line updates PATH for the Google Cloud SDK.
+if [ -f '/Users/julesberman/Downloads/google-cloud-sdk/path.zsh.inc' ]; then . '/Users/julesberman/Downloads/google-cloud-sdk/path.zsh.inc'; fi
+
+# The next line enables shell command completion for gcloud.
+if [ -f '/Users/julesberman/Downloads/google-cloud-sdk/completion.zsh.inc' ]; then . '/Users/julesberman/Downloads/google-cloud-sdk/completion.zsh.inc'; fi
