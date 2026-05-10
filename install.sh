@@ -9,15 +9,15 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Existing files are copied here before being overwritten.
 backup_root="$HOME/.config-backups/$(date +%Y%m%d-%H%M%S)"
 
-# Ask a yes/no question. The default is always "no" for safety.
+# Ask a yes/no question. The default is "yes" — empty input accepts.
 confirm() {
   local prompt="$1"
   local answer
 
-  read -r -p "$prompt [y/N] " answer
+  read -r -p "$prompt [Y/n] " answer
   case "$answer" in
-    [yY]|[yY][eE][sS]) return 0 ;;
-    *) return 1 ;;
+    [nN]|[nN][oO]) return 1 ;;
+    *) return 0 ;;
   esac
 }
 
@@ -94,6 +94,27 @@ brew_install_formula() {
 
   if confirm "Install $label with Homebrew?"; then
     brew install "$formula"
+  else
+    printf 'Skipped %s\n' "$label"
+  fi
+}
+
+# Install a group of Homebrew formulas in a single prompt. `brew install` is
+# idempotent, so already-installed formulas are skipped automatically.
+brew_install_formulas() {
+  local label="$1"
+  shift
+  local formulas=("$@")
+
+  printf '\n%s\n' "$label"
+
+  if ! have_command brew; then
+    printf 'Homebrew is required to install %s, but brew was not found.\n' "$label"
+    return
+  fi
+
+  if confirm "Install $label (${formulas[*]}) with Homebrew?"; then
+    brew install "${formulas[@]}"
   else
     printf 'Skipped %s\n' "$label"
   fi
@@ -180,6 +201,7 @@ main() {
   brew_install_cask "ghostty" "/Applications/Ghostty.app" "Ghostty"
   brew_install_font_cask "font-monaspace" "$HOME/Library/Fonts/Monaspace*.otf" "Monaspace fonts"
   brew_install_formula "starship" "starship" "Starship prompt"
+  brew_install_formulas "CLI utilities" fzf timg jq glow coreutils
 
   # Restore each tracked config file to the location where the corresponding
   # tool expects to find it.

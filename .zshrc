@@ -57,7 +57,7 @@ alias c='clear'
 # List files in useful formats.
 alias ll='ls -lah'
 alias la='ls -A'
-alias l='ls -CF'
+
 
 # Common directory jumps.
 alias ..='cd ..'
@@ -70,6 +70,7 @@ alias dud='du -d 1 -h'
 # Search command history case-insensitively.
 alias hgrep='history 1 | grep -i'
 
+alias src='source ~/.zshrc; echo "Reloaded ~/.zshrc"'
 # ---------------------------------------------------------------------------
 # Git Aliases
 # ---------------------------------------------------------------------------
@@ -173,8 +174,153 @@ if command -v starship >/dev/null 2>&1; then
   eval "$(starship init zsh)"
 fi
 
+# ---------------------------------------------------------------------------
+# fzf
+# ---------------------------------------------------------------------------
+# Enable fzf key bindings (Ctrl+R history, Ctrl+T files, Alt+C cd) and
+# fuzzy completion. Requires fzf 0.48+.
+if command -v fzf >/dev/null 2>&1; then
+  source <(fzf --zsh)
+fi
+
 # The next line updates PATH for the Google Cloud SDK.
 if [ -f '/Users/julesberman/Downloads/google-cloud-sdk/path.zsh.inc' ]; then . '/Users/julesberman/Downloads/google-cloud-sdk/path.zsh.inc'; fi
 
 # The next line enables shell command completion for gcloud.
 if [ -f '/Users/julesberman/Downloads/google-cloud-sdk/completion.zsh.inc' ]; then . '/Users/julesberman/Downloads/google-cloud-sdk/completion.zsh.inc'; fi
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# l() — interactive ls replacement with fuzzy picker, previews, and smart open
+#
+# Required:   fzf  (>= 0.27 for --expect; tested on 0.44)
+# Optional:   timg, jq, glow, column (bsdmainutils on Linux), GNU ls (coreutils on macOS)
+#
+# Install:
+#   Ubuntu/Debian: sudo apt install fzf timg jq glow bsdmainutils
+#   macOS:         brew install fzf timg jq glow coreutils
+#
+# Keys:  ↑↓ move · → into dir · ← parent · Enter open · Esc cancel
+#
+# Cross-shell: works in both bash and zsh. The preview helper is embedded as a
+# POSIX shell string passed to fzf, so no shell-specific function-export tricks.
+# ─────────────────────────────────────────────────────────────────────────────
+
+l() {
+    # In zsh, `local x` (no =value) prints x's existing value unless
+    # TYPESET_SILENT is set — which dumps every local on every loop iteration.
+    # LOCAL_OPTIONS scopes the setting to this function only.
+    [ -n "$ZSH_VERSION" ] && setopt local_options typeset_silent
+
+    # Prefer GNU ls (gls from coreutils) on macOS for --group-directories-first
+    # and --color=always; fall back to plain ls elsewhere.
+    local _ls=ls
+    command -v gls >/dev/null 2>&1 && _ls=gls
+
+    # POSIX preview script. fzf invokes this as: sh -c "<script>" _ <path>
+    # Detect gls inside the subshell too, since the parent's $_ls is not exported.
+    local _l_preview_script='
+        LS=ls
+        command -v gls >/dev/null 2>&1 && LS=gls
+        p="$1"
+        [ -z "$p" ] && exit 0
+        if [ -d "$p" ]; then
+            "$LS" -la --color=always -- "$p" 2>/dev/null
+        elif [ -f "$p" ]; then
+            if file --mime "$p" 2>/dev/null | grep -q "charset=binary"; then
+                basename -- "$p"
+                file -- "$p" 2>/dev/null
+                echo "size: $(du -h -- "$p" | cut -f1)"
+            else
+                head -200 -- "$p" 2>/dev/null
+            fi
+        else
+            echo "(not found: $p)"
+        fi
+    '
+
+    local cur="$PWD"
+
+    while true; do
+        # Two-column TSV listing:
+        #   col 1 = absolute path (clean, used by preview + outer shell)
+        #   col 2 = ANSI-colored display name (rendered by fzf via --ansi)
+        local listing
+        listing=$(
+            printf '%s\t.\n'  "$cur"
+            printf '%s\t..\n' "$(cd "$cur/.." 2>/dev/null && pwd)"
+            paste \
+                <("$_ls" -1 --group-directories-first -- "$cur" 2>/dev/null | sed "s|^|$cur/|") \
+                <("$_ls" -1 --color=always --group-directories-first -- "$cur" 2>/dev/null)
+        )
+
+        # Note: do NOT name a local "path" — zsh ties `path` to `PATH`, so
+        # `local path` empties PATH for the function and breaks command lookup.
+        local result key line entry target
+        result=$(
+            printf '%s\n' "$listing" \
+            | fzf --ansi \
+                  --delimiter=$'\t' \
+                  --with-nth=2 \
+                  --height=50% \
+                  --reverse \
+                  --border=rounded \
+                  --prompt="${cur/#$HOME/~} ❯ " \
+                  --pointer='▶' \
+                  --marker='✓' \
+                  --preview="sh -c '$_l_preview_script' _ {1}" \
+                  --preview-window=right:50%:wrap \
+                  --expect=right,left \
+                  --color='fg:#c0caf5,bg:-1,hl:#7aa2f7,fg+:#c0caf5,bg+:#283457,hl+:#7dcfff,prompt:#7aa2f7,pointer:#f7768e,marker:#9ece6a,border:#414868'
+        )
+        [ $? -ne 0 ] && return
+
+        key=$(printf  '%s\n' "$result" | sed -n '1p')
+        line=$(printf '%s\n' "$result" | sed -n '2p')
+        [ -z "$line" ] && return
+
+        target=$(printf '%s' "$line" | cut -f1)
+        entry=$(printf  '%s' "$line" | cut -f2)
+
+        case "$key" in
+            right)
+                if [ "$entry" = "." ]; then
+                    :
+                elif [ "$entry" = ".." ] || [ -d "$target" ]; then
+                    cur="$target"
+                fi
+                ;;
+            left)
+                cur=$(cd "$cur/.." && pwd)
+                ;;
+            "")
+                if [ "$entry" = "." ]; then
+                    cd "$cur" && return
+                elif [ "$entry" = ".." ] || [ -d "$target" ]; then
+                    cd "$target" && return
+                else
+                    cd "$cur"
+                    case "$entry" in
+                        *.png|*.jpg|*.jpeg|*.gif|*.webp|*.bmp|*.pdf)
+                            timg "$entry" 2>/dev/null || ${EDITOR:-vim} "$entry" ;;
+                        *.csv|*.tsv)
+                            column -s, -t -- "$entry" 2>/dev/null | less -S || ${EDITOR:-vim} "$entry" ;;
+                        *.json)
+                            jq -C . -- "$entry" 2>/dev/null | less -R || ${EDITOR:-vim} "$entry" ;;
+                        *.md)
+                            glow -p -- "$entry" 2>/dev/null || ${EDITOR:-vim} "$entry" ;;
+                        *.parquet|*.npy|*.npz|*.pt|*.pth|*.ckpt|*.safetensors)
+                            echo "$entry — binary ML file ($(du -h -- "$entry" | cut -f1))" ;;
+                        *.zip)
+                            unzip -l -- "$entry" 2>/dev/null | less || ${EDITOR:-vim} "$entry" ;;
+                        *.tar|*.tar.gz|*.tgz|*.tar.bz2|*.tar.xz)
+                            tar tvf -- "$entry" 2>/dev/null | less || ${EDITOR:-vim} "$entry" ;;
+                        *)
+                            ${EDITOR:-vim} "$entry" ;;
+                    esac
+                    return
+                fi
+                ;;
+        esac
+    done
+}
